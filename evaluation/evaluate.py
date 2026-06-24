@@ -154,13 +154,7 @@ def process_sequences(submission_dir, gt_dir, output_dir, time_tolerance=0.001):
             failed.append((name, reason))
             continue
 
-        # ----- Write est_ape -----
-        est_out = os.path.join(output_dir, f"{name}_est_ape.txt")
-        with open(est_out, 'w') as f:
-            for pose in poses:
-                f.write(' '.join(f"{v:.6f}" for v in pose) + '\n')
-
-        # ----- Match GT timestamps (two-pointer), write gt_ape & auc -----
+        # ----- Match GT timestamps (two-pointer), write est_ape, gt_ape & auc -----
         gt_data = np.loadtxt(gt_path)
         if gt_data.ndim == 1:
             gt_data = gt_data.reshape(1, -1)
@@ -169,7 +163,7 @@ def process_sequences(submission_dir, gt_dir, output_dir, time_tolerance=0.001):
         sub_ts_sorted = np.array(timestamps)[sub_sort_idx]
         sub_vel_sorted = np.array(velocities)[sub_sort_idx]
 
-        gt_ape_lines, auc_lines = [], []
+        est_ape_lines, gt_ape_lines, auc_lines = [], [], []
         i, n = 0, len(sub_ts_sorted)
 
         for gt_row in gt_data:
@@ -189,12 +183,19 @@ def process_sequences(submission_dir, gt_dir, output_dir, time_tolerance=0.001):
                     best_dist, best_idx = dist, i - 1
 
             if best_idx is not None:
+                orig_idx = sub_sort_idx[best_idx]
+                est_ape_lines.append(' '.join(f"{v:.6f}" for v in poses[orig_idx][:8]))
                 gt_ape_lines.append(' '.join(f"{v:.6f}" for v in gt_row[:8]))
                 sub_vel = sub_vel_sorted[best_idx]
                 gt_norm = float(np.linalg.norm(gt_vel))
                 diff_norm = float(np.linalg.norm(gt_vel - sub_vel))
                 rve = diff_norm / gt_norm if gt_norm != 0 else 0.0
                 auc_lines.append(f"{gt_ts:.6f} {rve:.8f} {gt_norm:.8f}")
+
+        # ----- Write est_ape -----
+        est_out = os.path.join(output_dir, f"{name}_est_ape.txt")
+        with open(est_out, 'w') as f:
+            f.write('\n'.join(est_ape_lines) + '\n')
 
         # ----- Write gt_ape -----
         gt_out = os.path.join(output_dir, f"{name}_gt_ape.txt")
@@ -248,6 +249,12 @@ def compute_ate(input_dir):
             gt_data = gt_data.reshape(1, -1)
         est_trans = est_data[:, 1:4]
         gt_trans = gt_data[:, 1:4]
+        # Truncate to the shorter array in case of mismatch (e.g. from old runs)
+        n = min(len(est_trans), len(gt_trans))
+        if len(est_trans) != len(gt_trans):
+            print(f"  WARNING: {seq_name}: est has {len(est_trans)} poses, gt has {len(gt_trans)} — truncating to {n}")
+            est_trans = est_trans[:n]
+            gt_trans = gt_trans[:n]
         R, t = umeyama_alignment(est_trans, gt_trans)
         aligned = (R @ est_trans.T).T + t
         errors = np.linalg.norm(aligned - gt_trans, axis=1)
